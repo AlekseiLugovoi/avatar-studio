@@ -1,0 +1,9 @@
+streamlit
+fastapi
+uvicorn[standard]
+python-multipart
+fal-client
+requests
+python-dotenv
+Pillow
+mutagen
