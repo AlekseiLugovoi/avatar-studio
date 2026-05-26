@@ -1,6 +1,6 @@
 # Avatar Studio
 
-Talking-avatar video generation demo: image + audio + prompt → video.
+Avatar video generation
 
 🌐 **Online demo:** https://avatar-studio-production-cc26.up.railway.app/
 
@@ -8,19 +8,16 @@ Talking-avatar video generation demo: image + audio + prompt → video.
 
 ```mermaid
 flowchart LR
-    UI[Streamlit :8501] -- submit_job --> J[app/jobs<br/>dict + ThreadPool 1]
+    UI[Streamlit :8501] -- submit_job --> J[app/jobs<br/>dict + ThreadPool N<br/>+ wakeup events]
     API[FastAPI :7860<br/>/api/* + /docs] -- submit_job --> J
     J -- worker thread --> B{Backend}
     B --> Mock[Mock]
     B --> Fal[fal.ai · omnihuman]
     B --> Local[OmniAvatar 1.3B / 14B<br/><i>stub</i>]
     B -- mp4 --> FS[(outputs/*.mp4)]
-    UI -- poll status --> J
-    API -- poll status / stream result --> J
+    J -. event push .-> UI
+    API -- get status / stream result --> J
 ```
-
-Both the Streamlit UI and the REST API call into the same `app/jobs` module —
-one queue, one worker, one source of truth.
 
 ## Quick Start
 
@@ -41,7 +38,8 @@ streamlit run app/main.py
 
 - UI: http://localhost:8501
 - Swagger / OpenAPI: http://localhost:7860/docs
-- Empty `FAL_API_KEY` → mock backend (offline, returns a cached sample video).
+- Smoke-test the REST API end-to-end: open [`APICheck.ipynb`](APICheck.ipynb)
+- Empty `FAL_API_KEY` → mock backend (offline, returns a cached sample video)
 
 ## REST API
 
@@ -51,9 +49,6 @@ streamlit run app/main.py
 | `GET`  | `/api/jobs` | List all jobs (newest first) |
 | `GET`  | `/api/jobs/{id}` | Get `Job` status |
 | `GET`  | `/api/jobs/{id}/result` | Download mp4 (404 until `done`) |
-
-`POST` form: `image`, `audio` (files), `prompt`, `mode`, `num_steps`, `guidance_scale`, `audio_scale`.
-`mode` ∈ `mock` · `fal` · `OmniAvatar 1.3B` · `OmniAvatar 14B` · `auto`. Tunable params apply to OmniAvatar only (`20–50`, `1.0–10.0`, `1.0–5.0`).
 
 <details>
 <summary><code>Job</code> object</summary>
@@ -88,8 +83,6 @@ curl -O :7860/api/jobs/<job_id>/result
 ```
 </details>
 
-Try-it-out + full schema → [`/docs`](http://localhost:7860/docs)
-
 ## Checklist
 
 **Frontend**
@@ -114,4 +107,4 @@ Try-it-out + full schema → [`/docs`](http://localhost:7860/docs)
 - [ ] TTS — генерация аудио из текста вместо загрузки файла
 - [x] Превью входных данных перед отправкой
 - [x] API-документация (Swagger)
-- [ ] Мониторинг, логирование, тесты
+- [x] Мониторинг, логирование, тесты — *логирование настроено (`logging.basicConfig` в main.py, `log.info`/`exception` в jobs/inference); smoke-тест REST API в [`APICheck.ipynb`](APICheck.ipynb). Мониторинга (Prometheus и т.п.) нет.*

@@ -6,7 +6,6 @@ Right column: bordered result frame + Run button + progress.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import streamlit as st
@@ -107,6 +106,13 @@ EXPAND_ANIM = """
    border on the right). st.video already constrains itself correctly. */
 [data-testid="stVerticalBlockBorderWrapper"] {
   overflow: hidden;
+}
+
+/* Square-ish "clear gallery" trash button in the sidebar header. */
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] button {
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 0.25rem;
 }
 
 [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdown"],
@@ -287,8 +293,9 @@ def show_generate_page() -> None:
                 (prompt or "").strip(), mode, params=params,
             )
 
-            # Server-side poll of in-memory job state. Streamlit pushes UI
-            # updates over its own WebSocket — no browser polling.
+            # Event-based wakeup: worker fires the per-job event on every
+            # progress change. No polling — neither on the browser (Streamlit
+            # WebSocket pushes widget deltas) nor on the server.
             last_pct = -1.0
             while True:
                 job = jobs.get_job(job_id)
@@ -300,7 +307,7 @@ def show_generate_page() -> None:
                     last_pct = job.progress
                 if job.status in ("done", "failed"):
                     break
-                time.sleep(0.3)
+                jobs.wait_for_update(job_id, timeout=30)
 
             if job and job.status == "done" and job.result_path:
                 progress_slot.empty()

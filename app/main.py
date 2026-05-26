@@ -72,7 +72,6 @@ def render_sidebar() -> None:
                 "🗑",
                 key="clear_gallery",
                 help="Clear all generated videos",
-                use_container_width=True,
             ):
                 clear_history()
                 st.session_state.pop("last_result", None)

@@ -44,6 +44,10 @@ class Job:
 
 
 _jobs: dict[str, Job] = {}
+# Per-job wakeup events: worker calls .set() on every progress update and on
+# final status; consumers (the UI loop) `wait_for_update()` instead of polling.
+# Kept out of the Job dataclass because asdict() can't deepcopy a Lock.
+_events: dict[str, threading.Event] = {}
 _lock = threading.Lock()
 # Configurable pool size. For real GPU inference keep at 1 (single device
 # can't run two models in parallel without OOM); for CPU-mock or multi-GPU
@@ -65,6 +69,7 @@ def submit_job(
     job = Job(id=uuid4().hex, prompt=prompt, mode=mode, params=params)
     with _lock:
         _jobs[job.id] = job
+        _events[job.id] = threading.Event()
     _executor.submit(
         _run_job, job.id,
         image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode, params,
@@ -83,8 +88,20 @@ def list_jobs() -> list[Job]:
         return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
 
 
+def wait_for_update(job_id: str, timeout: float = 30.0) -> None:
+    """Block until the worker pushes any state change for this job (or until
+    timeout fires as a sanity bound). True event-based wakeup — no polling on
+    the server side. State is always re-read from the dict by the caller."""
+    ev = _events.get(job_id)
+    if ev is None:
+        return
+    ev.wait(timeout)
+    ev.clear()
+
+
 def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode, params):
     job = _jobs[job_id]
+    event = _events.get(job_id)
     job.status = "running"
     job.started_at = datetime.utcnow().isoformat()
     started = time.time()
@@ -92,6 +109,8 @@ def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, m
     def on_progress(pct: float, msg: str = "") -> None:
         job.progress = max(0.0, min(100.0, float(pct)))
         job.message = msg or ""
+        if event is not None:
+            event.set()  # push: wake any UI waiter immediately
 
     try:
         video_bytes = generate(
@@ -125,3 +144,6 @@ def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, m
         job.finished_at = datetime.utcnow().isoformat()
         job.elapsed_seconds = round(time.time() - started, 1)
         log.exception("job %s failed", job_id)
+    finally:
+        if event is not None:
+            event.set()  # final wake so waiters see done/failed without timeout
