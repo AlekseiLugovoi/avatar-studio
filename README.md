@@ -2,6 +2,8 @@
 
 Talking-avatar video generation demo: image + audio + prompt → video.
 
+🌐 **Online demo:** https://avatar-studio-production-cc26.up.railway.app/
+
 ## Architecture
 
 ```mermaid
@@ -43,20 +45,50 @@ streamlit run app/main.py
 
 ## REST API
 
-```bash
-# Submit a job (returns {"job_id": "..."})
-curl -X POST http://localhost:7860/api/jobs \
-  -F image=@avatar.jpg -F audio=@speech.mp3 \
-  -F prompt="friendly, smiling" -F mode=fal
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/jobs` | Submit a job → `{"job_id"}` |
+| `GET`  | `/api/jobs` | List all jobs (newest first) |
+| `GET`  | `/api/jobs/{id}` | Get `Job` status |
+| `GET`  | `/api/jobs/{id}/result` | Download mp4 (404 until `done`) |
 
-# Poll status
-curl http://localhost:7860/api/jobs/<job_id>
+`POST` form: `image`, `audio` (files), `prompt`, `mode`, `num_steps`, `guidance_scale`, `audio_scale`.
+`mode` ∈ `mock` · `fal` · `OmniAvatar 1.3B` · `OmniAvatar 14B` · `auto`. Tunable params apply to OmniAvatar only (`20–50`, `1.0–10.0`, `1.0–5.0`).
 
-# Download result (404 until status=done)
-curl -O http://localhost:7860/api/jobs/<job_id>/result
+<details>
+<summary><code>Job</code> object</summary>
+
+```json
+{
+  "id": "a1b2c3d4...",
+  "status": "running",
+  "progress": 47.5,
+  "message": "mock step 9/20",
+  "prompt": "friendly, smiling",
+  "mode": "mock",
+  "params": {"num_steps": 30, "guidance_scale": 5.0, "audio_scale": 3.0},
+  "error": null,
+  "created_at": "2026-05-25T12:34:56",
+  "started_at": "2026-05-25T12:34:57",
+  "finished_at": null,
+  "elapsed_seconds": null,
+  "result_url": "/api/jobs/a1b2c3d4.../result"
+}
 ```
+`status`: `queued` → `running` → `done` \| `failed`. `result_url` is `null` until `done`.
+</details>
 
-`mode`: `mock` | `fal` | `OmniAvatar 1.3B` | `OmniAvatar 14B` | `auto`
+<details>
+<summary>Curl walkthrough</summary>
+
+```bash
+curl -X POST :7860/api/jobs -F image=@a.jpg -F audio=@b.mp3 -F mode=fal
+curl    :7860/api/jobs/<job_id>
+curl -O :7860/api/jobs/<job_id>/result
+```
+</details>
+
+Try-it-out + full schema → [`/docs`](http://localhost:7860/docs)
 
 ## Checklist
 

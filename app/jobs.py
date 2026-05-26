@@ -5,6 +5,7 @@ functions). One source of truth, no duplication."""
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,7 @@ class Job:
     message: str = ""
     prompt: str = ""
     mode: str = "auto"
+    params: dict = field(default_factory=dict)
     error: Optional[str] = None
     result_path: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -43,9 +45,13 @@ class Job:
 
 _jobs: dict[str, Job] = {}
 _lock = threading.Lock()
-# max_workers=1 → real queue; GPU inference must be serialized. Parallel
-# submits from the API queue up behind whatever is running.
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="job-worker")
+# Configurable pool size. For real GPU inference keep at 1 (single device
+# can't run two models in parallel without OOM); for CPU-mock or multi-GPU
+# setups raise it. The pool itself is a FIFO queue — parallel submits wait
+# their turn behind whatever is currently running.
+_WORKERS = max(1, int(os.getenv("WORKER_CONCURRENCY", "1")))
+_executor = ThreadPoolExecutor(max_workers=_WORKERS, thread_name_prefix="job-worker")
+log.info("job pool started with %d worker(s)", _WORKERS)
 
 
 def submit_job(
@@ -53,15 +59,17 @@ def submit_job(
     audio_bytes: bytes, audio_mime: str,
     prompt: str,
     mode: str = "auto",
+    params: Optional[dict] = None,
 ) -> str:
-    job = Job(id=uuid4().hex, prompt=prompt, mode=mode)
+    params = params or {}
+    job = Job(id=uuid4().hex, prompt=prompt, mode=mode, params=params)
     with _lock:
         _jobs[job.id] = job
     _executor.submit(
         _run_job, job.id,
-        image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode,
+        image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode, params,
     )
-    log.info("job %s submitted (mode=%s)", job.id, mode)
+    log.info("job %s submitted (mode=%s, params=%s)", job.id, mode, params)
     return job.id
 
 
@@ -75,7 +83,7 @@ def list_jobs() -> list[Job]:
         return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
 
 
-def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode):
+def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, mode, params):
     job = _jobs[job_id]
     job.status = "running"
     job.started_at = datetime.utcnow().isoformat()
@@ -87,7 +95,8 @@ def _run_job(job_id, image_bytes, image_mime, audio_bytes, audio_mime, prompt, m
 
     try:
         video_bytes = generate(
-            image_bytes, image_mime, audio_bytes, audio_mime, prompt, on_progress, mode=mode,
+            image_bytes, image_mime, audio_bytes, audio_mime, prompt, on_progress,
+            mode=mode, params=params,
         )
         if not video_bytes:
             raise RuntimeError("empty video bytes returned")

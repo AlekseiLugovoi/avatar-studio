@@ -23,7 +23,7 @@ from app.validation import (
 
 MUTED = "#6a737d"  # gray for the constraint text
 
-MOCK_OPTION = "Mock (sample video, ~10s)"
+MOCK_OPTION = "Mock"
 FAL_OPTION = "fal-ai/bytedance/omnihuman"
 MODELS = [MOCK_OPTION, FAL_OPTION, "OmniAvatar 1.3B", "OmniAvatar 14B"]
 
@@ -252,6 +252,17 @@ def show_generate_page() -> None:
         with run_col:
             submit = st.button("Run", type="primary", use_container_width=True)
 
+        params_active = model in ("OmniAvatar 1.3B", "OmniAvatar 14B")
+        with st.expander("Advanced parameters", expanded=False):
+            num_steps = st.slider("Inference steps", 20, 50, 30, 1, disabled=not params_active)
+            guidance_scale = st.slider("Guidance scale", 1.0, 10.0, 5.0, 0.5, disabled=not params_active)
+            audio_scale = st.slider("Audio scale", 1.0, 5.0, 3.0, 0.5, disabled=not params_active)
+        params = {
+            "num_steps": num_steps,
+            "guidance_scale": guidance_scale,
+            "audio_scale": audio_scale,
+        }
+
         progress_slot = st.empty()
         status_slot = st.empty()
 
@@ -273,7 +284,7 @@ def show_generate_page() -> None:
             job_id = jobs.submit_job(
                 image_file.getvalue(), image_file.type or "image/jpeg",
                 audio_file.getvalue(), audio_file.type or "audio/mpeg",
-                (prompt or "").strip(), mode,
+                (prompt or "").strip(), mode, params=params,
             )
 
             # Server-side poll of in-memory job state. Streamlit pushes UI

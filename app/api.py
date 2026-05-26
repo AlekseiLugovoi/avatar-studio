@@ -26,13 +26,24 @@ async def create_job(
     audio: UploadFile = File(..., description="Audio track (MP3 / WAV / OGG / WebM)"),
     prompt: str = Form("", description="Optional behavior prompt"),
     mode: str = Form("auto", description="mock | fal | OmniAvatar 1.3B | OmniAvatar 14B | auto"),
+    num_steps: int = Form(30, ge=10, le=100, description="Diffusion steps (OmniAvatar only)"),
+    guidance_scale: float = Form(5.0, ge=1.0, le=15.0, description="Prompt guidance (OmniAvatar only)"),
+    audio_scale: float = Form(3.0, ge=1.0, le=10.0, description="Audio guidance (OmniAvatar only)"),
 ):
     """Submit a new generation job. Returns the job id; the worker runs
-    asynchronously in a single-slot thread pool."""
+    asynchronously in a configurable thread pool (WORKER_CONCURRENCY).
+
+    Tunable params apply to OmniAvatar variants; fal/bytedance/omnihuman
+    accepts only image + audio and silently ignores them."""
+    params = {
+        "num_steps": num_steps,
+        "guidance_scale": guidance_scale,
+        "audio_scale": audio_scale,
+    }
     job_id = jobs.submit_job(
         await image.read(), image.content_type or "image/jpeg",
         await audio.read(), audio.content_type or "audio/mpeg",
-        prompt.strip(), mode,
+        prompt.strip(), mode, params=params,
     )
     return {"job_id": job_id}
 

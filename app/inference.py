@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import requests
 
@@ -121,15 +121,24 @@ def run_omniavatar(
     audio_mime: str,
     prompt: str,
     on_progress: ProgressCb,
+    params: Optional[dict] = None,
 ) -> bytes:
     """STUB. Runs local OmniAvatar inference. For now falls back to the mock
     backend so the UI flow works end-to-end. On Stage 2::
 
         weights = download_omniavatar_weights(variant)
         pipeline = load_omniavatar_pipeline(variant)
-        return pipeline(image=image_bytes, audio=audio_bytes, prompt=prompt)
+        return pipeline(
+            image=image_bytes, audio=audio_bytes, prompt=prompt,
+            num_steps=params.get("num_steps", 30),
+            guidance_scale=params.get("guidance_scale", 5.0),
+            audio_scale=params.get("audio_scale", 3.0),
+        )
     """
-    log.warning("STUB run_omniavatar(%s) — running mock fallback", variant)
+    log.warning(
+        "STUB run_omniavatar(variant=%s, params=%s) — running mock fallback",
+        variant, params or {},
+    )
     return run_mock(on_progress)
 
 
@@ -138,8 +147,25 @@ def run_omniavatar(
 # --------------------------------------------------------------------------- #
 
 
+def _ensure_sample_mp4(path: Path) -> bytes:
+    """Generate a 3-second 320x240 black H.264 MP4 once and cache it. Uses the
+    portable ffmpeg binary bundled with imageio-ffmpeg, so no system ffmpeg /
+    no internet is required."""
+    if path.exists() and path.stat().st_size > 1024:
+        return path.read_bytes()
+    try:
+        import imageio.v3 as iio
+        import numpy as np
+        frames = np.zeros((90, 240, 320, 3), dtype=np.uint8)  # 3s @ 30fps
+        iio.imwrite(str(path), frames, fps=30, codec="libx264")
+        return path.read_bytes()
+    except Exception as e:
+        log.warning("failed to generate sample mp4: %s", e)
+        return b""
+
+
 def run_mock(on_progress: ProgressCb) -> bytes:
-    """Imitate inference (~10 seconds), return a cached public sample MP4."""
+    """Imitate inference (~10 seconds), return a locally-generated black MP4."""
     steps = 20
     step_sleep = float(os.getenv("MOCK_STEP_SECONDS", "0.5"))
     for i in range(1, steps + 1):
@@ -147,16 +173,7 @@ def run_mock(on_progress: ProgressCb) -> bytes:
         on_progress(i * 100 / steps, f"mock step {i}/{steps}")
 
     OUTPUTS.mkdir(exist_ok=True)
-    sample = OUTPUTS / ".sample.mp4"
-    if sample.exists() and sample.stat().st_size > 0:
-        return sample.read_bytes()
-    try:
-        url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"
-        data = requests.get(url, timeout=30).content
-        sample.write_bytes(data)
-        return data
-    except Exception:
-        return b""
+    return _ensure_sample_mp4(OUTPUTS / ".sample_3s_black.mp4")
 
 
 def generate(
@@ -167,19 +184,25 @@ def generate(
     prompt,
     on_progress: ProgressCb,
     mode: str = "auto",
+    params: Optional[dict] = None,
 ) -> bytes:
     """Dispatch by ``mode``:
-      - "mock" → run_mock
-      - "fal"  → run_fal (requires FAL_KEY)
-      - "OmniAvatar 1.3B" / "OmniAvatar 14B" → run_omniavatar (currently STUB)
+      - "mock" → run_mock (params ignored)
+      - "fal"  → run_fal (omnihuman black-box: image+audio only, params ignored)
+      - "OmniAvatar 1.3B" / "OmniAvatar 14B" → run_omniavatar with params
+        (num_steps, guidance_scale, audio_scale; currently STUB falls back to mock)
       - "auto" → fal if FAL_KEY is set, otherwise mock
     """
+    params = params or {}
     if mode == "mock":
         return run_mock(on_progress)
     if mode in OMNIAVATAR_VARIANTS:
         return run_omniavatar(
             mode, image_bytes, image_mime, audio_bytes, audio_mime, prompt, on_progress,
+            params=params,
         )
     if mode == "fal" or (mode == "auto" and FAL_KEY):
+        # fal/bytedance/omnihuman accepts only image_url + audio_url — no
+        # tunable knobs exposed. Params are intentionally dropped here.
         return run_fal(image_bytes, image_mime, audio_bytes, audio_mime, prompt, on_progress)
     return run_mock(on_progress)
